@@ -881,6 +881,4 @@ async def get_artist_info(
 
 @app.get("/")
 async def root():
-    return {"status": "ok", "message": "Spotify Search API is running"}
-
-app = FastAPI()  # 确保这行在文件最后 
+    return {"status": "ok", "message": "Spotify Search API is running"} 
