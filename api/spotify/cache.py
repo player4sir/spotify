@@ -2,7 +2,6 @@ from typing import Dict, Optional
 import time
 import json
 from pathlib import Path
-from redis import Redis
 from vercel_kv import VercelKV
 
 
@@ -42,18 +41,6 @@ class Cache:
         }
         cache_path.write_text(json.dumps(data))
 
-class RedisCache:
-    def __init__(self, redis_url: str, ttl: int = 3600):
-        self.redis = Redis.from_url(redis_url)
-        self.ttl = ttl
-    
-    def get(self, key: str):
-        data = self.redis.get(key)
-        return json.loads(data) if data else None
-    
-    def set(self, key: str, value: dict):
-        self.redis.setex(key, self.ttl, json.dumps(value)) 
-
 class VercelCache:
     def __init__(self, ttl: int = 3600):
         self.kv = VercelKV()
@@ -64,14 +51,3 @@ class VercelCache:
     
     async def set(self, key: str, value: dict):
         await self.kv.set(key, value, ex=self.ttl) 
-
-class UpstashCache:
-    def __init__(self, redis_url: str, token: str, ttl: int = 3600):
-        self.redis = UpstashRedis(url=redis_url, token=token)
-        self.ttl = ttl
-    
-    async def get(self, key: str):
-        return await self.redis.get(key)
-    
-    async def set(self, key: str, value: dict):
-        await self.redis.setex(key, self.ttl, value) 
