@@ -244,51 +244,22 @@ class SpotifyAPI:
             if response.status_code == 401:
                 raise TokenError("Invalid or expired token")
             
-            # 其他错误处理
-            try:
-                error_data = response.json()
-                error = error_data.get('error', {})
-                error_message = error.get('message', '')
-                error_status = error.get('status', response.status_code)
-                
-                if error_status == 404:
-                    raise ResourceNotFoundError(f"Resource not found: {endpoint}")
-                elif error_status == 429:
-                    raise RateLimitError("Too many requests")
-                elif error_status == 400:
-                    if "invalid id" in error_message.lower():
-                        raise ResourceNotFoundError(f"Invalid ID: {endpoint}")
-                    else:
-                        raise ValidationError(error_message or "Invalid request")
-            except (ValueError, KeyError):
-                # 如果无法解析JSON，使用原始状态码
-                if response.status_code == 404:
-                    raise ResourceNotFoundError(f"Resource not found: {endpoint}")
-                elif response.status_code == 429:
-                    raise RateLimitError("Too many requests")
-                elif response.status_code == 400:
-                    raise ValidationError("Invalid request")
-            
+            # 确保响应成功并返回JSON数据
             response.raise_for_status()
             data = response.json()
             
+            # 缓存结果
             if hasattr(self, 'cache'):
                 await self.cache.set(cache_key, data)
                 
             return data
             
         except requests.exceptions.RequestException as e:
-            # 网络错误或其他请求异常
-            if isinstance(e, requests.exceptions.HTTPError):
-                if e.response.status_code == 401:
-                    raise TokenError("Invalid or expired token")
-                elif e.response.status_code == 404:
-                    raise ResourceNotFoundError(f"Resource not found: {endpoint}")
-                elif e.response.status_code == 429:
-                    raise RateLimitError("Too many requests")
-                elif e.response.status_code == 400:
-                    raise ValidationError("Invalid request")
             raise SpotifyAPIError(f"Request failed: {str(e)}")
+        except ValueError as e:
+            raise SpotifyAPIError(f"Invalid JSON response: {str(e)}")
+        except Exception as e:
+            raise SpotifyAPIError(f"Unexpected error: {str(e)}")
 
     def _post(self, endpoint: str, data: Dict = None) -> Dict:
         """通用POST请求方法"""
