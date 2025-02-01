@@ -11,7 +11,8 @@ from api.spotify.exceptions import *
 app = FastAPI(
     title="Spotify API",
     description="Spotify Web API 增强版接口",
-    version="1.0.0"
+    version="1.0.0",
+    root_path=""  # 确保根路径正确
 )
 
 # 安全认证方案
