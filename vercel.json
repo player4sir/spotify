@@ -2,14 +2,14 @@
     "version": 2,
     "builds": [
         {
-            "src": "spotify_search.py",
+            "src": "api/main.py",
             "use": "@vercel/python"
         }
     ],
     "routes": [
         {
-            "src": "/(.*)",
-            "dest": "spotify_search.py"
+            "src": "/api/(.*)",
+            "dest": "api/main.py"
         }
     ]
 } 
