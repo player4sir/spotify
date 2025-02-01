@@ -32,13 +32,28 @@ class SpotifyAPI:
             "Content-Type": "application/json"
         }
         
-        # Vercel环境检查
-        is_vercel = os.environ.get('VERCEL')
-        if is_vercel:
-            # Vercel环境禁用缓存
+        # 缓存配置
+        if API_CONFIG["cache"]["enabled"]:
+            is_vercel = os.environ.get('VERCEL')
+            database_url = os.environ.get('DATABASE_URL')
+            print(f"Environment: {'Vercel' if is_vercel else 'Local'}")
+            print(f"Database URL configured: {'Yes' if database_url else 'No'}")
+            
+            if is_vercel and database_url:
+                # Vercel环境 + 有数据库配置，使用 Neon
+                print("Using Neon Cache")
+                self.cache = NeonCache(ttl=API_CONFIG["cache"]["ttl"])
+            else:
+                # 本地开发环境或无数据库配置，使用文件缓存
+                print("Using File Cache")
+                from .cache import Cache
+                self.cache = Cache(
+                    cache_dir=".cache",
+                    ttl=API_CONFIG["cache"]["ttl"]
+                )
+        else:
+            print("Cache disabled")
             self.cache = None
-        elif API_CONFIG["cache"]["enabled"]:
-            self.cache = NeonCache(ttl=API_CONFIG["cache"]["ttl"])
     
     def search(
         self,
@@ -254,7 +269,7 @@ class SpotifyAPI:
                 
             return data
             
-        except requests.exceptions.RequestException as e:
+        except requests.RequestException as e:
             raise SpotifyAPIError(f"Request failed: {str(e)}")
         except ValueError as e:
             raise SpotifyAPIError(f"Invalid JSON response: {str(e)}")
