@@ -2,7 +2,8 @@ from typing import Dict, Optional
 import time
 import json
 from pathlib import Path
-from vercel_kv import VercelKV
+import os
+import asyncpg
 
 
 class Cache:
@@ -41,13 +42,51 @@ class Cache:
         }
         cache_path.write_text(json.dumps(data))
 
-class VercelCache:
+class NeonCache:
     def __init__(self, ttl: int = 3600):
-        self.kv = VercelKV()
         self.ttl = ttl
+        self.pool = None
+        
+    async def init(self):
+        if not self.pool:
+            self.pool = await asyncpg.create_pool(
+                os.environ.get('DATABASE_URL'),
+                ssl='require'
+            )
+            
+            # 创建缓存表
+            async with self.pool.acquire() as conn:
+                await conn.execute('''
+                    CREATE TABLE IF NOT EXISTS cache (
+                        key TEXT PRIMARY KEY,
+                        value JSONB,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        ttl INTEGER
+                    )
+                ''')
     
     async def get(self, key: str):
-        return await self.kv.get(key)
+        await self.init()
+        async with self.pool.acquire() as conn:
+            row = await conn.fetchrow(
+                '''
+                SELECT value FROM cache 
+                WHERE key = $1 
+                AND created_at + (ttl || ' seconds')::interval > CURRENT_TIMESTAMP
+                ''', 
+                key
+            )
+            return row['value'] if row else None
     
     async def set(self, key: str, value: dict):
-        await self.kv.set(key, value, ex=self.ttl) 
+        await self.init()
+        async with self.pool.acquire() as conn:
+            await conn.execute(
+                '''
+                INSERT INTO cache (key, value, ttl)
+                VALUES ($1, $2, $3)
+                ON CONFLICT (key) DO UPDATE
+                SET value = $2, created_at = CURRENT_TIMESTAMP, ttl = $3
+                ''',
+                key, json.dumps(value), self.ttl
+            ) 

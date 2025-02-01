@@ -13,10 +13,10 @@ API_CONFIG = {
         "priority": ["TW", "HK", "SG", "MY", "CN", "US"]
     },
     
-    # Vercel KV 配置
+    # 缓存配置
     "cache": {
         "enabled": True,
-        "type": "vercel_kv",
+        "type": "neon",
         "ttl": 3600
     }
 }

@@ -2,7 +2,7 @@ from typing import Dict, List, Optional
 import requests
 from ..config import API_CONFIG, SEARCH_CONFIG
 from .exceptions import *
-from .cache import VercelCache
+from .cache import NeonCache
 import hashlib
 import os
 
@@ -38,7 +38,7 @@ class SpotifyAPI:
             # Vercel环境禁用缓存
             self.cache = None
         elif API_CONFIG["cache"]["enabled"]:
-            self.cache = VercelCache(ttl=API_CONFIG["cache"]["ttl"])
+            self.cache = NeonCache(ttl=API_CONFIG["cache"]["ttl"])
     
     def search(
         self,
