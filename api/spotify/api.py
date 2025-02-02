@@ -1,5 +1,5 @@
 from typing import Dict, List, Optional
-import requests
+import httpx
 from ..config import API_CONFIG, SEARCH_CONFIG
 from .exceptions import *
 from .cache import NeonCache
@@ -253,38 +253,40 @@ class SpotifyAPI:
             if not self.headers.get("Authorization", "").startswith("Bearer "):
                 raise TokenError("Invalid token format")
             
-            response = requests.get(url, headers=self.headers, params=params)
-            
-            # 检查token相关错误
-            if response.status_code == 401:
-                raise TokenError("Invalid or expired token")
-            
-            # 确保响应成功并返回JSON数据
-            response.raise_for_status()
-            data = response.json()
-            
-            # 缓存结果
-            if hasattr(self, 'cache'):
-                await self.cache.set(cache_key, data)
+            async with httpx.AsyncClient() as client:
+                response = await client.get(url, headers=self.headers, params=params)
                 
-            return data
+                # 检查token相关错误
+                if response.status_code == 401:
+                    raise TokenError("Invalid or expired token")
+                
+                # 确保响应成功并返回JSON数据
+                response.raise_for_status()
+                data = response.json()
+                
+                # 缓存结果
+                if hasattr(self, 'cache'):
+                    await self.cache.set(cache_key, data)
+                    
+                return data
             
-        except requests.RequestException as e:
+        except httpx.RequestError as e:
             raise SpotifyAPIError(f"Request failed: {str(e)}")
         except ValueError as e:
             raise SpotifyAPIError(f"Invalid JSON response: {str(e)}")
         except Exception as e:
             raise SpotifyAPIError(f"Unexpected error: {str(e)}")
 
-    def _post(self, endpoint: str, data: Dict = None) -> Dict:
+    async def _post(self, endpoint: str, data: Dict = None) -> Dict:
         """通用POST请求方法"""
-        response = requests.post(
-            f"{self.base_url}{endpoint}",
-            headers=self.headers,
-            json=data
-        )
-        response.raise_for_status()
-        return response.json()
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                f"{self.base_url}{endpoint}",
+                headers=self.headers,
+                json=data
+            )
+            response.raise_for_status()
+            return response.json()
 
     def _get_all_items(self, 
                       endpoint: str, 
