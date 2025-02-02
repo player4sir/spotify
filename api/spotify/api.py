@@ -1,8 +1,8 @@
 from typing import Dict, List, Optional
-import httpx
-from ..config import API_CONFIG, SEARCH_CONFIG
+import requests
+from ..config import API_CONFIG, SEARCH_CONFIG, ENV_CONFIG
 from .exceptions import *
-from .cache import NeonCache
+from .cache import NeonCache, MemoryCache, Cache
 import hashlib
 import os
 
@@ -34,23 +34,16 @@ class SpotifyAPI:
         
         # 缓存配置
         if API_CONFIG["cache"]["enabled"]:
-            is_vercel = os.environ.get('VERCEL')
-            database_url = os.environ.get('DATABASE_URL')
-            print(f"Environment: {'Vercel' if is_vercel else 'Local'}")
-            print(f"Database URL configured: {'Yes' if database_url else 'No'}")
-            
-            if is_vercel and database_url:
-                # Vercel环境 + 有数据库配置，使用 Neon
-                print("Using Neon Cache")
+            cache_type = API_CONFIG["cache"]["type"]
+            if cache_type == "memory":
+                self.cache = MemoryCache(ttl=API_CONFIG["cache"]["ttl"])
+            elif cache_type == "file" and not ENV_CONFIG["is_vercel"]:
+                self.cache = Cache(ttl=API_CONFIG["cache"]["ttl"])
+            elif cache_type == "neon" and ENV_CONFIG["database_url"]:
                 self.cache = NeonCache(ttl=API_CONFIG["cache"]["ttl"])
             else:
-                # 本地开发环境或无数据库配置，使用文件缓存
-                print("Using File Cache")
-                from .cache import Cache
-                self.cache = Cache(
-                    cache_dir=".cache",
-                    ttl=API_CONFIG["cache"]["ttl"]
-                )
+                print(f"Warning: Cache type '{cache_type}' not available, using memory cache")
+                self.cache = MemoryCache(ttl=API_CONFIG["cache"]["ttl"])
         else:
             print("Cache disabled")
             self.cache = None
@@ -253,40 +246,38 @@ class SpotifyAPI:
             if not self.headers.get("Authorization", "").startswith("Bearer "):
                 raise TokenError("Invalid token format")
             
-            async with httpx.AsyncClient() as client:
-                response = await client.get(url, headers=self.headers, params=params)
-                
-                # 检查token相关错误
-                if response.status_code == 401:
-                    raise TokenError("Invalid or expired token")
-                
-                # 确保响应成功并返回JSON数据
-                response.raise_for_status()
-                data = response.json()
-                
-                # 缓存结果
-                if hasattr(self, 'cache'):
-                    await self.cache.set(cache_key, data)
-                    
-                return data
+            response = requests.get(url, headers=self.headers, params=params)
             
-        except httpx.RequestError as e:
+            # 检查token相关错误
+            if response.status_code == 401:
+                raise TokenError("Invalid or expired token")
+            
+            # 确保响应成功并返回JSON数据
+            response.raise_for_status()
+            data = response.json()
+            
+            # 缓存结果
+            if hasattr(self, 'cache'):
+                await self.cache.set(cache_key, data)
+                
+            return data
+            
+        except requests.RequestException as e:
             raise SpotifyAPIError(f"Request failed: {str(e)}")
         except ValueError as e:
             raise SpotifyAPIError(f"Invalid JSON response: {str(e)}")
         except Exception as e:
             raise SpotifyAPIError(f"Unexpected error: {str(e)}")
 
-    async def _post(self, endpoint: str, data: Dict = None) -> Dict:
+    def _post(self, endpoint: str, data: Dict = None) -> Dict:
         """通用POST请求方法"""
-        async with httpx.AsyncClient() as client:
-            response = await client.post(
-                f"{self.base_url}{endpoint}",
-                headers=self.headers,
-                json=data
-            )
-            response.raise_for_status()
-            return response.json()
+        response = requests.post(
+            f"{self.base_url}{endpoint}",
+            headers=self.headers,
+            json=data
+        )
+        response.raise_for_status()
+        return response.json()
 
     def _get_all_items(self, 
                       endpoint: str, 

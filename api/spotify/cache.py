@@ -4,7 +4,6 @@ import json
 from pathlib import Path
 import os
 import asyncpg
-import random
 
 
 class Cache:
@@ -51,6 +50,9 @@ class NeonCache:
         self._file_cache = None
         
     async def init(self):
+        if self._use_file_cache:
+            return
+            
         if not self.pool:
             try:
                 self.pool = await asyncpg.create_pool(
@@ -68,34 +70,20 @@ class NeonCache:
                             ttl INTEGER
                         )
                     ''')
-                    
-                    # 添加 token 表
-                    await conn.execute('''
-                        CREATE TABLE IF NOT EXISTS spotify_token (
-                            id SERIAL PRIMARY KEY,
-                            access_token TEXT NOT NULL,
-                            expires_at TIMESTAMP NOT NULL,
-                            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                        )
-                    ''')
             except Exception as e:
                 print(f"Failed to initialize Neon Cache: {e}")
-                if not os.environ.get('VERCEL'):
-                    # 只在非Vercel环境使用文件缓存
-                    self._use_file_cache = True
-                    from .cache import Cache
-                    self._file_cache = Cache(
-                        cache_dir=".cache",
-                        ttl=self.ttl
-                    )
+                # 切换到文件缓存
+                self._use_file_cache = True
+                from .cache import Cache
+                self._file_cache = Cache(
+                    cache_dir=".cache",
+                    ttl=self.ttl
+                )
     
     async def get(self, key: str):
         await self.init()
-        if self._use_file_cache and self._file_cache:
+        if self._use_file_cache:
             return await self._file_cache.get(key)
-            
-        if not self.pool:
-            return None
             
         try:
             async with self.pool.acquire() as conn:
@@ -114,11 +102,8 @@ class NeonCache:
     
     async def set(self, key: str, value: dict):
         await self.init()
-        if self._use_file_cache and self._file_cache:
+        if self._use_file_cache:
             return await self._file_cache.set(key, value)
-            
-        if not self.pool:
-            return
             
         try:
             async with self.pool.acquire() as conn:
@@ -132,58 +117,28 @@ class NeonCache:
                     key, json.dumps(value), self.ttl
                 )
         except Exception as e:
-            print(f"Neon Cache set error: {e}")
+            print(f"Neon Cache set error: {e}") 
+
+class MemoryCache:
+    """内存缓存实现"""
+    _cache = {}
     
-    async def get_token(self) -> Optional[Dict]:
-        """获取存储的token，支持轮换策略"""
-        await self.init()
-        try:
-            async with self.pool.acquire() as conn:
-                # 获取所有有效的token
-                rows = await conn.fetch('''
-                    SELECT access_token, 
-                           EXTRACT(EPOCH FROM expires_at) as expires_at,
-                           EXTRACT(EPOCH FROM created_at) as created_at
-                    FROM spotify_token 
-                    WHERE expires_at > CURRENT_TIMESTAMP
-                    ORDER BY created_at DESC
-                    LIMIT 3
-                ''')
-                
-                if rows:
-                    # 随机选择一个token，优先使用较新的token
-                    weights = [3, 2, 1][:len(rows)]  # 较新的token权重更大
-                    row = random.choices(rows, weights=weights, k=1)[0]
-                    return {
-                        "access_token": row["access_token"],
-                        "expires_at": row["expires_at"]
-                    }
-        except Exception as e:
-            print(f"Error getting token: {e}")
-        return None
+    def __init__(self, ttl: int = 3600):
+        self.ttl = ttl
     
-    async def set_token(self, token: str, expires_in: int):
-        """存储token，保留最近的几个有效token"""
-        await self.init()
-        try:
-            async with self.pool.acquire() as conn:
-                # 插入新token
-                await conn.execute('''
-                    INSERT INTO spotify_token (access_token, expires_at, created_at)
-                    VALUES ($1, 
-                           CURRENT_TIMESTAMP + ($2 || ' seconds')::interval,
-                           CURRENT_TIMESTAMP)
-                ''', token, expires_in)
-                
-                # 清理过期和多余的token
-                await conn.execute('''
-                    DELETE FROM spotify_token 
-                    WHERE id NOT IN (
-                        SELECT id FROM spotify_token 
-                        WHERE expires_at > CURRENT_TIMESTAMP 
-                        ORDER BY created_at DESC 
-                        LIMIT 3
-                    )
-                ''')
-        except Exception as e:
-            print(f"Error setting token: {e}") 
+    async def get(self, key: str) -> Optional[Dict]:
+        if key not in self._cache:
+            return None
+            
+        data = self._cache[key]
+        if time.time() - data["timestamp"] > self.ttl:
+            del self._cache[key]
+            return None
+            
+        return data["value"]
+    
+    async def set(self, key: str, value: Dict):
+        self._cache[key] = {
+            "timestamp": time.time(),
+            "value": value
+        } 

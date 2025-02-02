@@ -1,7 +1,13 @@
-# API配置
 import os
 
+# 环境配置
+ENV_CONFIG = {
+    "is_vercel": bool(os.environ.get('VERCEL')),
+    "is_prod": bool(os.environ.get('VERCEL')),
+    "database_url": os.environ.get('DATABASE_URL')
+}
 
+# API配置
 API_CONFIG = {
     # 基础配置
     "base_url": "https://api.spotify.com/v1",
@@ -16,7 +22,7 @@ API_CONFIG = {
     # 缓存配置
     "cache": {
         "enabled": True,
-        "type": "neon",
+        "type": "memory" if ENV_CONFIG["is_vercel"] else "file",
         "ttl": 3600
     }
 }
