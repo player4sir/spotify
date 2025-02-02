@@ -1,22 +1,33 @@
 import re
 import json
 import requests
+import time
+import random
 from typing import Dict, Optional
-from urllib.parse import urlparse, parse_qs
-import logging
 
 class SpotifyUtils:
     """
     Utility class for analyzing Spotify Web Player and extracting credentials
     """
     
+    # 定义多个客户端ID用于轮换
+    CLIENT_IDS = [
+        "d8a5ed958d274c2e8ee717e6a4b0971d",  # Web Player
+        "4673445df7354f0aaa1de3523fa8b2f7",  # Mobile App
+        "bff58e9698f94920b3c6a7c0623d94a5"   # Desktop App
+    ]
+    
+    MAX_RETRIES = 3
+    RETRY_DELAY = 1  # 基础延迟秒数
+    
     @staticmethod
-    def analyze_web_player_request(url: str) -> Dict:
-        """
-        Analyze a Spotify Web Player request to extract important parameters
-        """
-        print(f"Analyzing Web Player at URL: {url}")
-        
+    def _get_random_client_id() -> str:
+        """随机获取一个客户端ID"""
+        return random.choice(SpotifyUtils.CLIENT_IDS)
+    
+    @staticmethod
+    async def analyze_web_player_request(url: str, retry_count: int = 0) -> Dict:
+        """带重试机制的token获取"""
         try:
             headers = {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
@@ -24,42 +35,68 @@ class SpotifyUtils:
                 'Accept-Language': 'en-US,en;q=0.5',
             }
             
-            print("Sending request to Spotify Web Player...")
             response = requests.get(url, headers=headers)
-            print(f"Response status code: {response.status_code}")
             
             if response.status_code != 200:
-                print(f"Error: Received status code {response.status_code}")
-                return {"error": f"Failed to fetch web player: {response.status_code}"}
+                raise Exception(f"Failed to fetch web player: {response.status_code}")
             
             content = response.text
-            print(f"Received content length: {len(content)} characters")
             
-            # 尝试从script标签中提取JSON数据
-            script_pattern = r'<script id="session".+?>\s*(.*?)\s*</script>'
-            script_match = re.search(script_pattern, content, re.DOTALL)
+            # 尝试多种方式获取token
+            token = None
+            
+            # 方式1: 从script标签获取
+            script_match = re.search(r'<script id="session".+?>\s*(.*?)\s*</script>', content, re.DOTALL)
             if script_match:
                 try:
                     session_data = json.loads(script_match.group(1))
-                    print("Found session data in script tag")
                     if 'accessToken' in session_data:
-                        return {"access_token": session_data['accessToken']}
+                        token = session_data['accessToken']
                 except json.JSONDecodeError:
-                    print("Warning: Failed to parse session data JSON")
+                    pass
             
-            # 如果上面的方法失败，尝试正则匹配
-            token_match = re.search(r'accessToken:"([^"]+)"', content)
-            if token_match:
-                return {"access_token": token_match.group(1)}
+            # 方式2: 正则匹配
+            if not token:
+                token_patterns = [
+                    r'accessToken:"([^"]+)"',
+                    r'"accessToken":"([^"]+)"',
+                    r'access_token="([^"]+)"'
+                ]
+                for pattern in token_patterns:
+                    match = re.search(pattern, content)
+                    if match:
+                        token = match.group(1)
+                        break
             
-            return {"error": "No access token found"}
+            # 方式3: 客户端凭据
+            if not token:
+                client_id = SpotifyUtils._get_random_client_id()
+                token_url = "https://accounts.spotify.com/api/token"
+                token_data = {
+                    'grant_type': 'client_credentials',
+                    'client_id': client_id
+                }
+                token_response = requests.post(token_url, data=token_data)
+                if token_response.status_code == 200:
+                    token_info = token_response.json()
+                    token = token_info["access_token"]
             
-        except requests.RequestException as e:
-            print(f"Network error occurred: {e}")
-            return {"error": str(e)}
+            if token:
+                return {
+                    "access_token": token,
+                    "expires_in": 3600
+                }
+            
+            raise Exception("No token found")
+            
         except Exception as e:
-            print(f"Unexpected error occurred: {e}")
-            return {"error": str(e)}
+            if retry_count < SpotifyUtils.MAX_RETRIES:
+                # 指数退避重试
+                delay = SpotifyUtils.RETRY_DELAY * (2 ** retry_count) + random.uniform(0, 1)
+                print(f"Retry {retry_count + 1}/{SpotifyUtils.MAX_RETRIES} after {delay:.2f}s")
+                time.sleep(delay)
+                return await SpotifyUtils.analyze_web_player_request(url, retry_count + 1)
+            raise Exception(f"Failed to get access token after {SpotifyUtils.MAX_RETRIES} retries: {str(e)}")
     
     @staticmethod
     def extract_token_from_headers(headers: Dict) -> Optional[str]:

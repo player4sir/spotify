@@ -6,6 +6,8 @@ from api.spotify.analyzer import SpotifyAnalyzer
 from api.spotify.api import SpotifyAPI
 from api.spotify.utils import SpotifyUtils
 from api.spotify.exceptions import *
+import time
+from api.spotify.cache import NeonCache
 
 # 创建FastAPI应用
 app = FastAPI(
@@ -17,6 +19,35 @@ app = FastAPI(
 
 # 安全认证方案
 security = HTTPBearer(auto_error=False)
+
+# 创建缓存实例
+token_cache = NeonCache()
+
+async def get_cached_token():
+    """获取缓存的token，如果过期则重新获取"""
+    # 先尝试从数据库获取
+    cached = await token_cache.get_token()
+    if cached and cached["expires_at"] > time.time():
+        return cached["access_token"]
+    
+    # 如果没有缓存或已过期，获取新token
+    try:
+        token_info = SpotifyUtils.analyze_web_player_request("https://open.spotify.com")
+        if not token_info or "access_token" not in token_info:
+            raise Exception("Failed to get access token")
+        
+        # 存储新token
+        await token_cache.set_token(
+            token_info["access_token"],
+            token_info.get("expires_in", 3600) - 60  # 提前60秒更新
+        )
+        
+        return token_info["access_token"]
+    except Exception as e:
+        raise HTTPException(
+            status_code=401,
+            detail={"code": "TOKEN_ERROR", "message": str(e)}
+        )
 
 # 请求/响应模型
 class TokenResponse(BaseModel):
@@ -42,38 +73,48 @@ async def get_spotify(
     credentials: Optional[HTTPAuthorizationCredentials] = Security(security)
 ) -> SpotifyAPI:
     try:
-        # 如果没有提供token，自动获取新token
-        if not credentials:
-            new_token = SpotifyUtils.analyze_web_player_request("https://open.spotify.com")
-            token = new_token["access_token"]
-        else:
+        if credentials:
+            # 如果提供了token，直接使用
             token = credentials.credentials
+        else:
+            # 否则使用缓存的token
+            token = await get_cached_token()
             
         return SpotifyAPI(token)
     except Exception as e:
-        # 如果token无效，自动获取新token
-        try:
-            new_token = SpotifyUtils.analyze_web_player_request("https://open.spotify.com")
-            return SpotifyAPI(new_token["access_token"])
-        except Exception as e:
-            raise HTTPException(
-                status_code=401,
-                detail={"code": "TOKEN_ERROR", "message": str(e)}
-            )
+        raise HTTPException(
+            status_code=401,
+            detail={"code": "TOKEN_ERROR", "message": str(e)}
+        )
 
 # 路由定义
 @app.get(
     "/api/token", 
     response_model=TokenResponse,
     summary="获取访问令牌",
-    description="从Spotify Web Player获取访问令牌"
+    description="获取Spotify访问令牌（优先使用缓存）"
 )
 async def get_token():
     try:
-        credentials = SpotifyUtils.analyze_web_player_request("https://open.spotify.com")
+        # 获取缓存的token信息
+        cached = await token_cache.get_token()
+        if cached:
+            return {
+                "access_token": cached["access_token"],
+                "expires_in": int(cached["expires_at"] - time.time())
+            }
+        
+        # 如果没有缓存，获取新token
+        token_info = SpotifyUtils.analyze_web_player_request("https://open.spotify.com")
+        if not token_info or "access_token" not in token_info:
+            raise Exception("Failed to get access token")
+        
+        expires_in = token_info.get("expires_in", 3600)
+        await token_cache.set_token(token_info["access_token"], expires_in - 60)
+        
         return {
-            "access_token": credentials["access_token"],
-            "expires_in": credentials.get("expires_in", 3600)
+            "access_token": token_info["access_token"],
+            "expires_in": expires_in
         }
     except Exception as e:
         raise HTTPException(
