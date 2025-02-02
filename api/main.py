@@ -307,17 +307,21 @@ async def get_featured(spotify: SpotifyAPI = Depends(get_spotify)):
     try:
         featured = {
             "top_artists": await spotify.get_several_artists([
-                "2elBjNSdBE2Y3f0j1mjrql",  # 周杰伦
-                "7Dx7RhX0mFuXhCOUgB01uM",  # 林俊杰
-                "4Rj6NKQVqK4Wy95JxZPJbz",  # 薛之谦
-                "2QcZxAgcs2I1q7CtCkl6MI"   # 陈奕迅
+                "0BezPR1Hn38i8qShQKunSD",  # 周杰伦
+                "6gvSKE72vF6N20LfBqrDmm",  # 林俊杰
+                "1cg0bYpP5e2DNG0RgK2CMN",  # 薛之谦
+                "2QcZxAgcs2I1q7CtCkl6MI",   # 陈奕迅
+                "7aRC4L63dBn3CiLDuWaLSI",
+                "3df3XLKuqTQ6iOSmi0K3Wp",
+                "0mG77q0N7TRltkLh4p2ASD",
+                "0Riv2KnFcLZA3JSVryRg4y"
             ]),
             "hot_albums": await spotify.get_new_releases(
                 limit=10,
                 market=spotify.market
             ),
             "hot_tracks": await spotify.get_recommendations(
-                seed_artists=["2elBjNSdBE2Y3f0j1mjrql"],
+                seed_artists=["0BezPR1Hn38i8qShQKunSD","0Riv2KnFcLZA3JSVryRg4y","1cg0bYpP5e2DNG0RgK2CMN"],
                 limit=10,
                 market=spotify.market
             ),
