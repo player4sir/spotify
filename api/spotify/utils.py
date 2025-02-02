@@ -3,6 +3,8 @@ import json
 import requests
 import time
 import random
+import httpx
+import asyncio
 from typing import Dict, Optional
 
 class SpotifyUtils:
@@ -35,66 +37,68 @@ class SpotifyUtils:
                 'Accept-Language': 'en-US,en;q=0.5',
             }
             
-            response = requests.get(url, headers=headers)
-            
-            if response.status_code != 200:
-                raise Exception(f"Failed to fetch web player: {response.status_code}")
-            
-            content = response.text
-            
-            # 尝试多种方式获取token
-            token = None
-            
-            # 方式1: 从script标签获取
-            script_match = re.search(r'<script id="session".+?>\s*(.*?)\s*</script>', content, re.DOTALL)
-            if script_match:
-                try:
-                    session_data = json.loads(script_match.group(1))
-                    if 'accessToken' in session_data:
-                        token = session_data['accessToken']
-                except json.JSONDecodeError:
-                    pass
-            
-            # 方式2: 正则匹配
-            if not token:
-                token_patterns = [
-                    r'accessToken:"([^"]+)"',
-                    r'"accessToken":"([^"]+)"',
-                    r'access_token="([^"]+)"'
-                ]
-                for pattern in token_patterns:
-                    match = re.search(pattern, content)
-                    if match:
-                        token = match.group(1)
-                        break
-            
-            # 方式3: 客户端凭据
-            if not token:
-                client_id = SpotifyUtils._get_random_client_id()
-                token_url = "https://accounts.spotify.com/api/token"
-                token_data = {
-                    'grant_type': 'client_credentials',
-                    'client_id': client_id
-                }
-                token_response = requests.post(token_url, data=token_data)
-                if token_response.status_code == 200:
-                    token_info = token_response.json()
-                    token = token_info["access_token"]
-            
-            if token:
-                return {
-                    "access_token": token,
-                    "expires_in": 3600
-                }
-            
-            raise Exception("No token found")
-            
+            # 使用 httpx 替代 requests 以支持异步
+            async with httpx.AsyncClient() as client:
+                response = await client.get(url, headers=headers)
+                
+                if response.status_code != 200:
+                    raise Exception(f"Failed to fetch web player: {response.status_code}")
+                
+                content = response.text
+                
+                # 尝试多种方式获取token
+                token = None
+                
+                # 方式1: 从script标签获取
+                script_match = re.search(r'<script id="session".+?>\s*(.*?)\s*</script>', content, re.DOTALL)
+                if script_match:
+                    try:
+                        session_data = json.loads(script_match.group(1))
+                        if 'accessToken' in session_data:
+                            token = session_data['accessToken']
+                    except json.JSONDecodeError:
+                        pass
+                
+                # 方式2: 正则匹配
+                if not token:
+                    token_patterns = [
+                        r'accessToken:"([^"]+)"',
+                        r'"accessToken":"([^"]+)"',
+                        r'access_token="([^"]+)"'
+                    ]
+                    for pattern in token_patterns:
+                        match = re.search(pattern, content)
+                        if match:
+                            token = match.group(1)
+                            break
+                
+                # 方式3: 客户端凭据
+                if not token:
+                    client_id = SpotifyUtils._get_random_client_id()
+                    token_url = "https://accounts.spotify.com/api/token"
+                    token_data = {
+                        'grant_type': 'client_credentials',
+                        'client_id': client_id
+                    }
+                    token_response = await client.post(token_url, data=token_data)
+                    if token_response.status_code == 200:
+                        token_info = token_response.json()
+                        token = token_info["access_token"]
+                
+                if token:
+                    return {
+                        "access_token": token,
+                        "expires_in": 3600
+                    }
+                
+                raise Exception("No token found")
+                
         except Exception as e:
             if retry_count < SpotifyUtils.MAX_RETRIES:
                 # 指数退避重试
                 delay = SpotifyUtils.RETRY_DELAY * (2 ** retry_count) + random.uniform(0, 1)
                 print(f"Retry {retry_count + 1}/{SpotifyUtils.MAX_RETRIES} after {delay:.2f}s")
-                time.sleep(delay)
+                await asyncio.sleep(delay)  # 使用异步睡眠
                 return await SpotifyUtils.analyze_web_player_request(url, retry_count + 1)
             raise Exception(f"Failed to get access token after {SpotifyUtils.MAX_RETRIES} retries: {str(e)}")
     
