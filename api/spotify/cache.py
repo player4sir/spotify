@@ -51,9 +51,6 @@ class NeonCache:
         self._file_cache = None
         
     async def init(self):
-        if self._use_file_cache:
-            return
-            
         if not self.pool:
             try:
                 self.pool = await asyncpg.create_pool(
@@ -71,29 +68,34 @@ class NeonCache:
                             ttl INTEGER
                         )
                     ''')
-                
-                # 添加 token 表
-                await conn.execute('''
-                    CREATE TABLE IF NOT EXISTS spotify_token (
-                        id INTEGER PRIMARY KEY DEFAULT 1,
-                        access_token TEXT NOT NULL,
-                        expires_at TIMESTAMP NOT NULL
-                    )
-                ''')
+                    
+                    # 添加 token 表
+                    await conn.execute('''
+                        CREATE TABLE IF NOT EXISTS spotify_token (
+                            id SERIAL PRIMARY KEY,
+                            access_token TEXT NOT NULL,
+                            expires_at TIMESTAMP NOT NULL,
+                            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                        )
+                    ''')
             except Exception as e:
                 print(f"Failed to initialize Neon Cache: {e}")
-                # 切换到文件缓存
-                self._use_file_cache = True
-                from .cache import Cache
-                self._file_cache = Cache(
-                    cache_dir=".cache",
-                    ttl=self.ttl
-                )
+                if not os.environ.get('VERCEL'):
+                    # 只在非Vercel环境使用文件缓存
+                    self._use_file_cache = True
+                    from .cache import Cache
+                    self._file_cache = Cache(
+                        cache_dir=".cache",
+                        ttl=self.ttl
+                    )
     
     async def get(self, key: str):
         await self.init()
-        if self._use_file_cache:
+        if self._use_file_cache and self._file_cache:
             return await self._file_cache.get(key)
+            
+        if not self.pool:
+            return None
             
         try:
             async with self.pool.acquire() as conn:
@@ -112,8 +114,11 @@ class NeonCache:
     
     async def set(self, key: str, value: dict):
         await self.init()
-        if self._use_file_cache:
+        if self._use_file_cache and self._file_cache:
             return await self._file_cache.set(key, value)
+            
+        if not self.pool:
+            return
             
         try:
             async with self.pool.acquire() as conn:
